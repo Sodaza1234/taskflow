@@ -1,5 +1,5 @@
 import http from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -10,8 +10,34 @@ const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
 
-// in-memory tasks
+const DATA_DIR = path.join(__dirname, "data");
+const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
+
+// tasks
 let tasks = [];
+
+// --- persistence ---
+async function loadTasks() {
+  try {
+    await mkdir(DATA_DIR, { recursive: true });
+    const s = await readFile(TASKS_FILE, "utf8");
+    const obj = JSON.parse(s);
+    if (Array.isArray(obj)) return obj;
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveTasks(nextTasks) {
+  await mkdir(DATA_DIR, { recursive: true });
+  const tmp = TASKS_FILE + ".tmp";
+  await writeFile(tmp, JSON.stringify(nextTasks, null, 2), "utf8");
+  await writeFile(TASKS_FILE, JSON.stringify(nextTasks, null, 2), "utf8");
+}
+
+// 起動時に読み込み
+tasks = await loadTasks();
 
 function json(res, status, obj) {
   const body = status === 204 ? "" : JSON.stringify(obj);
@@ -81,17 +107,14 @@ const server = http.createServer(async (req, res) => {
   const method = req.method ?? "GET";
   const pathname = url.pathname;
 
-  // health
   if (pathname === "/api/healthz" && method === "GET") {
-    return json(res, 200, { ok: true, node: process.version });
+    return json(res, 200, { ok: true, node: process.version, tasks: tasks.length });
   }
 
-  // list
   if (pathname === "/api/tasks" && method === "GET") {
     return json(res, 200, { tasks });
   }
 
-  // create
   if (pathname === "/api/tasks" && method === "POST") {
     try {
       const body = await readJsonBody(req);
@@ -106,13 +129,13 @@ const server = http.createServer(async (req, res) => {
         createdAt: new Date().toISOString(),
       };
       tasks = [task, ...tasks];
+      await saveTasks(tasks);
       return json(res, 201, { task });
     } catch (e) {
       return json(res, 400, { error: e.message });
     }
   }
 
-  // update/delete: /api/tasks/:id
   const m = pathname.match(/^\/api\/tasks\/([^/]+)$/);
   if (m) {
     const id = m[1];
@@ -127,6 +150,7 @@ const server = http.createServer(async (req, res) => {
         if (idx === -1) return json(res, 404, { error: "not found" });
 
         tasks[idx] = { ...tasks[idx], done: body.done };
+        await saveTasks(tasks);
         return json(res, 200, { task: tasks[idx] });
       } catch (e) {
         return json(res, 400, { error: e.message });
@@ -137,6 +161,7 @@ const server = http.createServer(async (req, res) => {
       const before = tasks.length;
       tasks = tasks.filter((t) => t.id !== id);
       if (tasks.length === before) return json(res, 404, { error: "not found" });
+      await saveTasks(tasks);
       return json(res, 204, {});
     }
 
