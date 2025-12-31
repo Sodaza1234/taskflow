@@ -1,5 +1,5 @@
 import http from "node:http";
-import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -33,7 +33,7 @@ async function saveTasks(nextTasks) {
   await mkdir(DATA_DIR, { recursive: true });
   const tmp = TASKS_FILE + ".tmp";
   await writeFile(tmp, JSON.stringify(nextTasks, null, 2), "utf8");
-  await writeFile(TASKS_FILE, JSON.stringify(nextTasks, null, 2), "utf8");
+  await rename(tmp, TASKS_FILE);
 }
 
 // 起動時に読み込み
