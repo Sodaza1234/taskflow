@@ -1,3 +1,6 @@
 node_modules/
 .DS_Store
 .env
+data/tasks.json
+data/*.tmp
+*.tmp
