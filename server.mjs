@@ -10,8 +10,13 @@ const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
 
-const DATA_DIR = path.join(__dirname, "data");
-const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, "data");
+
+const TASKS_FILE = process.env.TASKS_FILE
+  ? path.resolve(process.env.TASKS_FILE)
+  : path.join(DATA_DIR, "tasks.json");
 
 // tasks
 let tasks = [];
