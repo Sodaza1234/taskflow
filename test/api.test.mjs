@@ -10,13 +10,23 @@ async function getFreePort() {
   return await new Promise((resolve, reject) => {
     const s = net.createServer();
     s.listen(0, "127.0.0.1", () => {
-      const port = s.address().port;
-      s.close(() => resolve(port));
+    const addr = s.address();
+    if (!addr || typeof addr === "string") {
+    s.close(() => reject(new Error("failed to get port")));
+  return;
+}
+const port = addr.port;
+s.close(() => resolve(port));
+
     });
     s.on("error", reject);
   });
 }
 
+/**
+ * @param {string} url
+ * @param {number} [timeoutMs]
+ */
 async function waitForReady(url, timeoutMs = 5000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {

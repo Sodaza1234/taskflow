@@ -4,6 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
+// @ts-check
+/** @typedef {{ id: string, title: string, done: boolean, createdAt: string }} Task */
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -19,6 +22,7 @@ const TASKS_FILE = process.env.TASKS_FILE
   : path.join(DATA_DIR, "tasks.json");
 
 // tasks
+/** @type {Task[]} */
 let tasks = [];
 
 // --- persistence ---
@@ -34,6 +38,7 @@ async function loadTasks() {
   }
 }
 
+/** @param {Task[]} nextTasks */
 async function saveTasks(nextTasks) {
   await mkdir(DATA_DIR, { recursive: true });
   const tmp = TASKS_FILE + ".tmp";
@@ -44,6 +49,11 @@ async function saveTasks(nextTasks) {
 // 起動時に読み込み
 tasks = await loadTasks();
 
+/**
+ * @param {import("node:http").ServerResponse} res
+ * @param {number} status
+ * @param {unknown} obj
+ */
 function json(res, status, obj) {
   const body = status === 204 ? "" : JSON.stringify(obj);
   res.writeHead(status, {
@@ -53,11 +63,17 @@ function json(res, status, obj) {
   res.end(body);
 }
 
+/**
+ * @param {import("node:http").ServerResponse} res
+ * @param {number} status
+ * @param {string} text
+ */
 function sendText(res, status, text) {
   res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
   res.end(text);
 }
 
+/** @param {string} filePath */
 function contentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   return (
@@ -74,6 +90,10 @@ function contentType(filePath) {
   );
 }
 
+/**
+ * @param {import("node:http").IncomingMessage} req
+ * @param {number} [limitBytes]
+ */
 async function readJsonBody(req, limitBytes = 1024 * 1024) {
   return await new Promise((resolve, reject) => {
     let size = 0;
@@ -99,6 +119,7 @@ async function readJsonBody(req, limitBytes = 1024 * 1024) {
   });
 }
 
+/** @param {import("node:http").ServerResponse} res */
 function notFound(res) {
   sendText(res, 404, "Not Found");
 }
@@ -137,7 +158,8 @@ const server = http.createServer(async (req, res) => {
       await saveTasks(tasks);
       return json(res, 201, { task });
     } catch (e) {
-      return json(res, 400, { error: e.message });
+      const msg = e instanceof Error ? e.message : String(e);
+      return json(res, 400, { error: msg });
     }
   }
 
@@ -158,7 +180,8 @@ const server = http.createServer(async (req, res) => {
         await saveTasks(tasks);
         return json(res, 200, { task: tasks[idx] });
       } catch (e) {
-        return json(res, 400, { error: e.message });
+        const msg = e instanceof Error ? e.message : String(e);
+        return json(res, 400, { error: msg });
       }
     }
 
