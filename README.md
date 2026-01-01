@@ -2,6 +2,8 @@
 
 ![CI](https://github.com/728jm2pczg-glitch/taskflow/actions/workflows/ci.yml/badge.svg)
 
+![screenshot](docs/screenshot.png)
+
 Node.js（標準モジュール）だけで動くタスク管理の最小アプリ。
 
 ## 目次
