@@ -4,3 +4,8 @@ node_modules/
 data/tasks.json
 data/*.tmp
 *.tmp
+
+# sqlite runtime files
+data/*.db
+data/*.db-*
+data/*.sqlite*
