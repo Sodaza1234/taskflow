@@ -1,53 +1,18 @@
-import http from "node:http";
-import { readFile, stat, mkdir, writeFile, rename } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
-
 // @ts-check
-/** @typedef {{ id: string, title: string, done: boolean, createdAt: string }} Task */
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { openDb } from "./db.mjs";
+import { newId, makePassword, hashPassword, safeEqualHex } from "./auth.mjs";
 
-const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-const PUBLIC_DIR = path.join(__dirname, "public");
+const PORT = Number(process.env.PORT ?? 3000);
+const HOST = process.env.HOST ?? "127.0.0.1";
 
-const DATA_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(__dirname, "data");
-
-const TASKS_FILE = process.env.TASKS_FILE
-  ? path.resolve(process.env.TASKS_FILE)
-  : path.join(DATA_DIR, "tasks.json");
-
-// tasks
-/** @type {Task[]} */
-let tasks = [];
-
-// --- persistence ---
-async function loadTasks() {
-  try {
-    await mkdir(DATA_DIR, { recursive: true });
-    const s = await readFile(TASKS_FILE, "utf8");
-    const obj = JSON.parse(s);
-    if (Array.isArray(obj)) return obj;
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-/** @param {Task[]} nextTasks */
-async function saveTasks(nextTasks) {
-  await mkdir(DATA_DIR, { recursive: true });
-  const tmp = TASKS_FILE + ".tmp";
-  await writeFile(tmp, JSON.stringify(nextTasks, null, 2), "utf8");
-  await rename(tmp, TASKS_FILE);
-}
-
-// 起動時に読み込み
-tasks = await loadTasks();
+const DB_PATH =
+  process.env.TASKFLOW_DB_PATH ?? path.join(process.cwd(), "data", "taskflow.db");
+const db = openDb(DB_PATH);
 
 /**
  * @param {import("node:http").ServerResponse} res
@@ -55,10 +20,10 @@ tasks = await loadTasks();
  * @param {unknown} obj
  */
 function json(res, status, obj) {
-  const body = status === 204 ? "" : JSON.stringify(obj);
+  const body = JSON.stringify(obj);
   res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(body),
   });
   res.end(body);
 }
@@ -69,25 +34,18 @@ function json(res, status, obj) {
  * @param {string} text
  */
 function sendText(res, status, text) {
-  res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
+  res.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
   res.end(text);
 }
 
-/** @param {string} filePath */
-function contentType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  return (
-    {
-      ".html": "text/html; charset=utf-8",
-      ".css": "text/css; charset=utf-8",
-      ".js": "text/javascript; charset=utf-8",
-      ".json": "application/json; charset=utf-8",
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".svg": "image/svg+xml",
-    }[ext] || "application/octet-stream"
-  );
+/** @param {import("node:http").ServerResponse} res */
+function notFound(res) {
+  sendText(res, 404, "not found");
+}
+
+/** @param {import("node:http").ServerResponse} res */
+function unauthorized(res) {
+  json(res, 401, { error: "unauthorized" });
 }
 
 /**
@@ -95,124 +53,299 @@ function contentType(filePath) {
  * @param {number} [limitBytes]
  */
 async function readJsonBody(req, limitBytes = 1024 * 1024) {
-  return await new Promise((resolve, reject) => {
-    let size = 0;
-    let data = "";
+  /** @type {Buffer[]} */
+  const chunks = [];
+  let total = 0;
+
+  await new Promise((resolve, reject) => {
     req.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > limitBytes) {
-        reject(new Error("Payload too large"));
-        req.destroy();
+      total += chunk.length;
+      if (total > limitBytes) {
+        reject(new Error("body too large"));
         return;
       }
-      data += chunk.toString("utf8");
+      chunks.push(chunk);
     });
-    req.on("end", () => {
-      if (!data) return resolve(null);
-      try {
-        resolve(JSON.parse(data));
-      } catch {
-        reject(new Error("Invalid JSON"));
-      }
-    });
+    req.on("end", resolve);
     req.on("error", reject);
   });
+
+  const raw = Buffer.concat(chunks).toString("utf-8").trim();
+  if (!raw) return null;
+  return JSON.parse(raw);
 }
 
-/** @param {import("node:http").ServerResponse} res */
-function notFound(res) {
-  sendText(res, 404, "Not Found");
+/**
+ * @param {string | undefined} cookieHeader
+ * @returns {Record<string, string>}
+ */
+function parseCookies(cookieHeader) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  if (!cookieHeader) return out;
+  const parts = cookieHeader.split(";");
+  for (const p of parts) {
+    const [k, ...rest] = p.trim().split("=");
+    if (!k) continue;
+    out[k] = rest.join("=");
+  }
+  return out;
 }
+
+/**
+ * @param {import("node:http").ServerResponse} res
+ * @param {string} name
+ * @param {string} value
+ * @param {{ httpOnly?: boolean, maxAge?: number, sameSite?: "Lax" | "Strict" | "None", path?: string }} [opts]
+ */
+function setCookie(res, name, value, opts = {}) {
+  const parts = [];
+  parts.push(`${name}=${value}`);
+  parts.push(`Path=${opts.path ?? "/"}`);
+  parts.push(`SameSite=${opts.sameSite ?? "Lax"}`);
+  if (opts.httpOnly ?? true) parts.push("HttpOnly");
+  if (typeof opts.maxAge === "number") parts.push(`Max-Age=${opts.maxAge}`);
+  // NOTE: production HTTPSなら Secure を付ける（今回はローカル想定なので付けない）
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+/** @returns {string} */
+function nowIso() {
+  return new Date().toISOString();
+}
+
+/**
+ * @param {number} days
+ * @returns {string}
+ */
+function addDaysIso(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
+
+/**
+ * @param {import("node:http").IncomingMessage} req
+ * @returns {{ userId: string, sid: string } | null}
+ */
+function getAuth(req) {
+  const cookies = parseCookies(req.headers.cookie);
+  const sid = cookies.sid;
+  if (!sid) return null;
+
+  const session = db.getSession(sid);
+  if (!session) return null;
+
+  const exp = Date.parse(session.expiresAt);
+  if (!Number.isFinite(exp) || exp <= Date.now()) {
+    db.deleteSession(sid);
+    return null;
+  }
+
+  return { userId: session.userId, sid };
+}
+
+/** @param {string} filePath */
+function contentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".html") return "text/html; charset=utf-8";
+  if (ext === ".css") return "text/css; charset=utf-8";
+  if (ext === ".js") return "text/javascript; charset=utf-8";
+  if (ext === ".png") return "image/png";
+  if (ext === ".svg") return "image/svg+xml";
+  return "application/octet-stream";
+}
+
+const publicDir = path.join(process.cwd(), "public");
 
 const server = http.createServer(async (req, res) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "no-referrer");
+  try {
+    const u = new URL(req.url ?? "/", `http://${HOST}:${PORT}`);
+    const pathname = u.pathname;
 
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const method = req.method ?? "GET";
-  const pathname = url.pathname;
-
-  if (pathname === "/api/healthz" && method === "GET") {
-    return json(res, 200, { ok: true, node: process.version, tasks: tasks.length });
-  }
-
-  if (pathname === "/api/tasks" && method === "GET") {
-    return json(res, 200, { tasks });
-  }
-
-  if (pathname === "/api/tasks" && method === "POST") {
-    try {
-      const body = await readJsonBody(req);
-      const title = body?.title;
-      if (typeof title !== "string" || title.trim().length === 0) {
-        return json(res, 400, { error: "title is required" });
-      }
-      const task = {
-        id: randomUUID(),
-        title: title.trim(),
-        done: false,
-        createdAt: new Date().toISOString(),
-      };
-      tasks = [task, ...tasks];
-      await saveTasks(tasks);
-      return json(res, 201, { task });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return json(res, 400, { error: msg });
+    // ---- API ----
+    if (pathname === "/api/healthz" && req.method === "GET") {
+      return json(res, 200, { ok: true, node: process.version });
     }
-  }
 
-  const m = pathname.match(/^\/api\/tasks\/([^/]+)$/);
-  if (m) {
-    const id = m[1];
+    if (pathname === "/api/signup" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const email = body?.email;
+      const password = body?.password;
 
-    if (method === "PATCH") {
+      if (typeof email !== "string" || email.trim() === "") {
+        return json(res, 400, { error: "email is required" });
+      }
+      if (typeof password !== "string" || password.length < 8) {
+        return json(res, 400, { error: "password must be at least 8 chars" });
+      }
+
+      const { salt, passwordHash } = makePassword(password);
+      const user = {
+        id: newId(),
+        email: email.trim().toLowerCase(),
+        passwordHash,
+        salt,
+        createdAt: nowIso(),
+      };
+
       try {
-        const body = await readJsonBody(req);
-        if (typeof body?.done !== "boolean") {
-          return json(res, 400, { error: "done(boolean) is required" });
-        }
-        const idx = tasks.findIndex((t) => t.id === id);
-        if (idx === -1) return json(res, 404, { error: "not found" });
-
-        tasks[idx] = { ...tasks[idx], done: body.done };
-        await saveTasks(tasks);
-        return json(res, 200, { task: tasks[idx] });
+        db.createUser(user);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        return json(res, 400, { error: msg });
+        if (msg.includes("UNIQUE") && msg.includes("users.email")) {
+          return json(res, 409, { error: "email already exists" });
+        }
+        return json(res, 500, { error: "failed to create user" });
       }
+
+      // signup時にログイン状態にする（最小運用）
+      const sid = crypto.randomUUID();
+      db.createSession({
+        id: sid,
+        userId: user.id,
+        createdAt: nowIso(),
+        expiresAt: addDaysIso(7),
+      });
+      setCookie(res, "sid", sid, { httpOnly: true, sameSite: "Lax", path: "/" });
+
+      return json(res, 201, { user: { id: user.id, email: user.email, createdAt: user.createdAt } });
     }
 
-    if (method === "DELETE") {
-      const before = tasks.length;
-      tasks = tasks.filter((t) => t.id !== id);
-      if (tasks.length === before) return json(res, 404, { error: "not found" });
-      await saveTasks(tasks);
-      return json(res, 204, {});
+    if (pathname === "/api/login" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const email = body?.email;
+      const password = body?.password;
+
+      if (typeof email !== "string" || email.trim() === "") {
+        return json(res, 400, { error: "email is required" });
+      }
+      if (typeof password !== "string" || password === "") {
+        return json(res, 400, { error: "password is required" });
+      }
+
+      const user = db.getUserByEmail(email.trim().toLowerCase());
+      if (!user) return json(res, 401, { error: "invalid credentials" });
+
+      const computed = hashPassword(password, user.salt);
+      if (!safeEqualHex(computed, user.passwordHash)) {
+        return json(res, 401, { error: "invalid credentials" });
+      }
+
+      const sid = crypto.randomUUID();
+      db.createSession({
+        id: sid,
+        userId: user.id,
+        createdAt: nowIso(),
+        expiresAt: addDaysIso(7),
+      });
+      setCookie(res, "sid", sid, { httpOnly: true, sameSite: "Lax", path: "/" });
+
+      return json(res, 200, { ok: true });
     }
 
-    return json(res, 405, { error: "Method Not Allowed" });
-  }
+    if (pathname === "/api/logout" && req.method === "POST") {
+      const cookies = parseCookies(req.headers.cookie);
+      const sid = cookies.sid;
+      if (sid) db.deleteSession(sid);
 
-  // static
-  let filePath = pathname === "/" ? "/index.html" : pathname;
-  filePath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, "");
-  const absPath = path.join(PUBLIC_DIR, filePath);
+      // cookie削除
+      setCookie(res, "sid", "", { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 0 });
+      res.writeHead(204);
+      return res.end();
+    }
 
-  try {
-    const st = await stat(absPath);
-    if (!st.isFile()) return notFound(res);
+    if (pathname === "/api/me" && req.method === "GET") {
+      const auth = getAuth(req);
+      if (!auth) return unauthorized(res);
 
-    const data = await readFile(absPath);
-    res.writeHead(200, { "Content-Type": contentType(absPath) });
-    res.end(data);
-  } catch {
-    notFound(res);
+      const user = db.getUserPublicById(auth.userId);
+      if (!user) return unauthorized(res);
+
+      return json(res, 200, { user });
+    }
+
+    // tasks: require auth
+    if (pathname === "/api/tasks" && req.method === "GET") {
+      const auth = getAuth(req);
+      if (!auth) return unauthorized(res);
+
+      const tasks = db.listTasksByUser(auth.userId);
+      return json(res, 200, { tasks });
+    }
+
+    if (pathname === "/api/tasks" && req.method === "POST") {
+      const auth = getAuth(req);
+      if (!auth) return unauthorized(res);
+
+      const body = await readJsonBody(req);
+      const title = body?.title;
+
+      if (typeof title !== "string" || title.trim() === "") {
+        return json(res, 400, { error: "title is required" });
+      }
+
+      const task = {
+        id: crypto.randomUUID(),
+        userId: auth.userId,
+        title: title.trim(),
+        done: false,
+        createdAt: nowIso(),
+      };
+
+      db.insertTask(task);
+      return json(res, 201, { task });
+    }
+
+    const m = pathname.match(/^\/api\/tasks\/([^/]+)$/);
+    if (m && req.method === "PATCH") {
+      const auth = getAuth(req);
+      if (!auth) return unauthorized(res);
+
+      const id = m[1];
+      const body = await readJsonBody(req);
+      const done = body?.done;
+
+      if (typeof done !== "boolean") {
+        return json(res, 400, { error: "done(boolean) is required" });
+      }
+
+      const updated = db.setDone(auth.userId, id, done);
+      if (!updated) return notFound(res);
+
+      return json(res, 200, { task: updated });
+    }
+
+    if (m && req.method === "DELETE") {
+      const auth = getAuth(req);
+      if (!auth) return unauthorized(res);
+
+      const id = m[1];
+      const ok = db.deleteTask(auth.userId, id);
+      if (!ok) return notFound(res);
+
+      res.writeHead(204);
+      return res.end();
+    }
+
+    // ---- Static ----
+    const rel = pathname === "/" ? "/index.html" : pathname;
+    const filePath = path.join(publicDir, path.normalize(rel));
+
+    if (!filePath.startsWith(publicDir)) return notFound(res);
+
+    fs.readFile(filePath, (err, buf) => {
+      if (err) return notFound(res);
+      res.writeHead(200, { "content-type": contentType(filePath) });
+      res.end(buf);
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return json(res, 500, { error: msg });
   }
 });
 
-server.listen(PORT, "0.0.0.0", () => {
+server.listen(PORT, HOST, () => {
+  // eslint-disable-next-line no-console
   console.log(`http://localhost:${PORT}`);
 });

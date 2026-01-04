@@ -9,5 +9,5 @@
     "types": ["node"],
     "strict": true
   },
-  "include": ["server.mjs", "test/**/*.mjs"]
+  "include": ["server.mjs", "db.mjs", "auth.mjs", "test/**/*.mjs"]
 }
